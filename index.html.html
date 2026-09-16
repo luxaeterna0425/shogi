@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>将棋 Ver.2</title>
+<style>
+:root{--wood:#e6b96d;--line:#3b2a17;--sel:#fff2a8;--legal:#b9e6a8;--bg:#f5f1e8}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;background:var(--bg);font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Yu Gothic",sans-serif;color:#222}
+.app{max-width:620px;margin:auto;padding:env(safe-area-inset-top) 10px env(safe-area-inset-bottom)}
+h1{font-size:20px;text-align:center;margin:8px 0}
+.status{text-align:center;font-weight:700;margin:6px 0 10px}
+.hand{min-height:52px;border:1px solid #aaa;border-radius:10px;padding:6px;background:#fff;display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+.hand-label{font-size:12px;color:#666;margin-right:4px}
+.handpiece{border:1px solid #987;background:#f7d79d;border-radius:6px;padding:7px 8px;font-size:18px;font-weight:700}
+.handpiece.selected{background:var(--sel);outline:2px solid #c89b00}
+.board{width:min(96vw,570px);aspect-ratio:1;margin:8px auto;display:grid;grid-template-columns:repeat(9,1fr);background:var(--wood);border:2px solid var(--line);touch-action:manipulation}
+.cell{position:relative;border-right:1px solid var(--line);border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-size:clamp(20px,6vw,35px);font-weight:800;line-height:1}
+.cell:nth-child(9n){border-right:0}
+.cell:nth-last-child(-n+9){border-bottom:0}
+.cell.selected{background:var(--sel)}
+.cell.legal{background:var(--legal)}
+.piece{display:inline-block;user-select:none}
+.gote{transform:rotate(180deg)}
+.promoted{color:#b3261e}
+.controls{display:flex;gap:8px;justify-content:center;margin:10px 0}
+button{font:inherit;border:0;border-radius:10px;padding:11px 16px;background:#222;color:#fff;font-weight:700}
+button.secondary{background:#777}
+.note{font-size:12px;color:#666;line-height:1.5;margin:8px 4px 18px}
+</style>
+</head>
+<body>
+<div class="app">
+<h1>将棋 Ver.2</h1>
+<div id="goteHand" class="hand"></div>
+<div id="status" class="status"></div>
+<div id="board" class="board"></div>
+<div id="senteHand" class="hand"></div>
+<div class="controls">
+<button id="reset">最初から</button>
+<button id="undo" class="secondary">待った</button>
+</div>
+<div class="note">駒をタップ → 移動先をタップ。持ち駒もタップして打てます。成りは移動時に確認します。Ver.1では二歩・行き所のない駒を判定します。王手・詰み・打ち歩詰め等の完全な合法手判定は今後追加できます。</div>
+</div>
+<script>
+const B={P:"歩",L:"香",N:"桂",S:"銀",G:"金",B:"角",R:"飛",K:"玉",
+       "+P":"と","+L":"杏","+N":"圭","+S":"全","+B":"馬","+R":"龍"};
+const promotable=new Set(["P","L","N","S","B","R"]);
+let board,turn,hands,selected,handSel,history=[];
+
+function empty(){return Array.from({length:9},()=>Array(9).fill(null))}
+function init(){
+ board=empty(); turn=1; hands={"1":{},"-1":{}}; selected=null; handSel=null; history=[];
+ const back=["L","N","S","G","K","G","S","N","L"];
+ for(let c=0;c<9;c++){board[8][c]={t:back[c],o:1};board[6][c]={t:"P",o:1};
+                       board[0][c]={t:back[8-c],o:-1};board[2][c]={t:"P",o:-1}}
+ board[7][1]={t:"R",o:1}; board[7][7]={t:"B",o:1};
+ board[1][7]={t:"R",o:-1}; board[1][1]={t:"B",o:-1};
+ render();
+}
+function cloneState(){return JSON.stringify({board,turn,hands})}
+function restore(s){let x=JSON.parse(s);board=x.board;turn=x.turn;hands=x.hands;selected=null;handSel=null;render()}
+function inb(r,c){return r>=0&&r<9&&c>=0&&c<9}
+function dirs(p){
+ const o=p.o, t=p.t;
+ const f=-o;
+ if(t==="P")return [[f,0,1]];
+ if(t==="L")return [[f,0,9]];
+ if(t==="N")return [[2*f,-1,1],[2*f,1,1]];
+ if(t==="S")return [[f,-1,1],[f,0,1],[f,1,1],[-f,-1,1],[-f,1,1]];
+ if(["G","+P","+L","+N","+S"].includes(t))return [[f,-1,1],[f,0,1],[f,1,1],[0,-1,1],[0,1,1],[-f,0,1]];
+ if(t==="K")return [[-1,-1,1],[-1,0,1],[-1,1,1],[0,-1,1],[0,1,1],[1,-1,1],[1,0,1],[1,1,1]];
+ if(t==="B")return [[-1,-1,9],[-1,1,9],[1,-1,9],[1,1,9]];
+ if(t==="R")return [[-1,0,9],[1,0,9],[0,-1,9],[0,1,9]];
+ if(t==="+B")return [[-1,-1,9],[-1,1,9],[1,-1,9],[1,1,9],[-1,0,1],[1,0,1],[0,-1,1],[0,1,1]];
+ if(t==="+R")return [[-1,0,9],[1,0,9],[0,-1,9],[0,1,9],[-1,-1,1],[-1,1,1],[1,-1,1],[1,1,1]];
+ return [];
+}
+function moves(r,c){
+ const p=board[r][c], a=[];
+ for(const [dr,dc,max] of dirs(p)){
+   for(let k=1;k<=max;k++){
+    const nr=r+dr*k,nc=c+dc*k;if(!inb(nr,nc))break;
+    if(board[nr][nc]){if(board[nr][nc].o!==p.o)a.push([nr,nc]);break}
+    a.push([nr,nc]);
+   }
+ }
+ return a;
+}
+function canPromote(p,r1,r2){if(!promotable.has(p.t))return false; return p.o===1?(r1<=2||r2<=2):(r1>=6||r2>=6)}
+function forced(p,r){if(p.t==="P"||p.t==="L")return p.o===1?r===0:r===8;if(p.t==="N")return p.o===1?r<=1:r>=7;return false}
+function base(t){return t.startsWith("+")?t.slice(1):t}
+function dropLegal(t,o,r,c){
+ if(board[r][c])return false;
+ if((t==="P"||t==="L") && (o===1?r===0:r===8))return false;
+ if(t==="N" && (o===1?r<=1:r>=7))return false;
+ if(t==="P"){for(let rr=0;rr<9;rr++){let p=board[rr][c];if(p&&p.o===o&&p.t==="P")return false}}
+ return true;
+}
+function act(r,c){
+ if(handSel){
+   if(dropLegal(handSel.t,turn,r,c)){history.push(cloneState());board[r][c]={t:handSel.t,o:turn};hands[turn][handSel.t]--;if(!hands[turn][handSel.t])delete hands[turn][handSel.t];handSel=null;turn*=-1;render()} return;
+ }
+ if(selected){
+  const [sr,sc]=selected; const legal=moves(sr,sc).some(x=>x[0]===r&&x[1]===c);
+  if(legal){history.push(cloneState());let p=board[sr][sc],cap=board[r][c];if(cap){let t=base(cap.t);hands[turn][t]=(hands[turn][t]||0)+1}
+    board[sr][sc]=null;
+    if(canPromote(p,sr,r)){if(forced(p,r)||confirm("成りますか？"))p={t:"+"+p.t,o:p.o}}
+    board[r][c]=p;selected=null;turn*=-1;render();return;
+  }
+ }
+ let p=board[r][c]; if(p&&p.o===turn){selected=[r,c];handSel=null}else selected=null;render();
+}
+function renderHand(o,id){
+ const el=document.getElementById(id);el.innerHTML='<span class="hand-label">'+(o===1?"先手 持ち駒":"後手 持ち駒")+'</span>';
+ for(const [t,n] of Object.entries(hands[o])){let b=document.createElement("button");b.className="handpiece"+(handSel&&handSel.t===t&&turn===o?" selected":"");b.textContent=B[t]+(n>1?"×"+n:"");b.onclick=()=>{if(turn!==o)return;handSel={t};selected=null;render()};el.appendChild(b)}
+}
+function render(){
+ document.getElementById("status").textContent=(turn===1?"▲ 先手":"△ 後手")+" の手番";
+ renderHand(-1,"goteHand");renderHand(1,"senteHand");
+ const el=document.getElementById("board");el.innerHTML="";
+ let legal=new Set();if(selected)moves(...selected).forEach(x=>legal.add(x.join(",")));
+ for(let r=0;r<9;r++)for(let c=0;c<9;c++){let d=document.createElement("div");d.className="cell";if(selected&&selected[0]===r&&selected[1]===c)d.classList.add("selected");if(legal.has(r+","+c))d.classList.add("legal");
+  let p=board[r][c];if(p){let s=document.createElement("span");s.className="piece "+(p.o===-1?"gote ":"")+(p.t.startsWith("+")?"promoted":"");s.textContent=B[p.t];d.appendChild(s)}
+  d.onclick=()=>act(r,c);el.appendChild(d)}
+}
+document.getElementById("reset").onclick=()=>{if(confirm("最初から始めますか？"))init()};
+document.getElementById("undo").onclick=()=>{if(history.length)restore(history.pop())};
+init();
+</script>
+</body>
+</html>
